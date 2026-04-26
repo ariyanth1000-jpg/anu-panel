@@ -1,5 +1,6 @@
 import re
 import asyncio
+import os
 from aiohttp import web
 from telethon import TelegramClient
 
@@ -7,7 +8,13 @@ from telethon import TelegramClient
 api_id = 21385262
 api_hash = "0b685b2ead34f78600e21e748495682d"
 
-GROUP_ID = -1003771161345
+# 🔥 multiple groups
+GROUP_IDS = [
+    -1003771161345,
+    -1001234567890,
+    -1009876543210
+]
+
 LIMIT = 100
 
 client = TelegramClient("otp_session", api_id, api_hash)
@@ -22,12 +29,10 @@ def clean(text):
 
 def extract_numbers(text):
     nums = re.findall(r'\+[\dXx\s]{6,}', text)
-
     out = []
     for n in nums:
         if len(re.sub(r'\D', '', n)) >= 7:
             out.append(n.strip())
-
     return out
 
 def extract_otps(text):
@@ -36,19 +41,16 @@ def extract_otps(text):
 
 def parse(text):
     text = clean(text)
-
     numbers = extract_numbers(text)
     otps = extract_otps(text)
 
     result = []
-
     for n in numbers:
         for o in otps:
             result.append({
                 "number": n,
                 "otp": o
             })
-
     return result
 
 # ================= CACHE =================
@@ -58,19 +60,20 @@ async def build_cache():
     items = []
     seen = set()
 
-    async for msg in client.iter_messages(GROUP_ID, limit=LIMIT):
+    for gid in GROUP_IDS:
+        async for msg in client.iter_messages(gid, limit=LIMIT):
 
-        if not msg.message:
-            continue
-
-        for item in parse(msg.message):
-            key = (item["number"], item["otp"])
-
-            if key in seen:
+            if not msg.message:
                 continue
 
-            seen.add(key)
-            items.append(item)
+            for item in parse(msg.message):
+                key = (item["number"], item["otp"])
+
+                if key in seen:
+                    continue
+
+                seen.add(key)
+                items.append(item)
 
     CACHE = items
 
@@ -79,8 +82,7 @@ async def data(request):
     return web.json_response({"items": CACHE})
 
 # ================= HTML =================
-HTML = """
-<!doctype html>
+HTML = """<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -151,12 +153,6 @@ function normalize(x){
   return x.replace(/[^0-9]/g,'');
 }
 
-/*
-🔥 STRICT SEARCH:
-- first 6 digits
-- last 2 digits
-*/
-
 function smartMatch(num, q){
 
   num = normalize(num);
@@ -175,7 +171,6 @@ function smartMatch(num, q){
   return (qFirst6 === nFirst6) && (qLast2 === nLast2);
 }
 
-// 🔥 COPY FUNCTION
 function copyText(t){
   navigator.clipboard.writeText(t);
 }
@@ -224,7 +219,7 @@ async function load(){
   }
 }
 
-setInterval(load, 1000);
+setInterval(load, 2000);
 load();
 
 </script>
@@ -235,7 +230,7 @@ load();
 
 # ================= START =================
 async def main():
-    await client.start(phone=None)
+    await client.start()
     await build_cache()
 
     app = web.Application()
@@ -245,13 +240,14 @@ async def main():
     runner = web.AppRunner(app)
     await runner.setup()
 
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    print("LIVE: http://127.0.0.1:8080")
+    print(f"LIVE: http://127.0.0.1:{port}")
 
     while True:
         await build_cache()
-        await asyncio.sleep(2)
+        await asyncio.sleep(5)
 
 asyncio.run(main())
