@@ -235,7 +235,7 @@ load();
 
 # ================= START =================
 async def main():
-    await client.start()
+    await client.start(phone=None)
     await build_cache()
 
     app = web.Application()
