@@ -139,12 +139,12 @@ cursor:pointer;
 <body>
 
 <div class="header">
-<div class="title">LIVE OTP SYSTEM</div>
+<div class="title">TAMIM ANU LIVE OTP SYSTEM</div>
 </div>
 
 <div class="search">
-<input id="search" placeholder="Search number...">
-<button class="clear-btn" onclick="clearSearch()">X</button>
+<input id="search" placeholder="paste number here & get Code...">
+<button class="clear-btn" onclick="clearSearch()">Clear</button>
 </div>
 
 <div id="data"></div>
