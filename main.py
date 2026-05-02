@@ -3,17 +3,17 @@ import asyncio
 import os
 from aiohttp import web
 from telethon import TelegramClient
+from dotenv import load_dotenv
+
+# ================= LOAD ENV =================
+load_dotenv()
 
 # ================= CONFIG =================
-api_id = int(os.environ.get("API_ID"))
-api_hash = os.environ.get("API_HASH")
+api_id = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
 
-GROUP_IDS = [
-    -1003771161345,
-    -1002531902737
-]
-
-LIMIT = 100
+GROUP_ID = -1003771161345
+LIMIT = 500
 
 client = TelegramClient("otp_session", api_id, api_hash)
 
@@ -45,33 +45,27 @@ def parse(text):
     result = []
     for n in numbers:
         for o in otps:
-            result.append({
-                "number": n,
-                "otp": o
-            })
+            result.append({"number": n, "otp": o})
     return result
 
 # ================= CACHE =================
 async def build_cache():
     global CACHE
-
     items = []
     seen = set()
 
-    for gid in GROUP_IDS:
-        async for msg in client.iter_messages(gid, limit=LIMIT):
+    async for msg in client.iter_messages(GROUP_ID, limit=LIMIT):
+        if not msg.message:
+            continue
 
-            if not msg.message:
+        for item in parse(msg.message):
+            key = (item["number"], item["otp"])
+
+            if key in seen:
                 continue
 
-            for item in parse(msg.message):
-                key = (item["number"], item["otp"])
-
-                if key in seen:
-                    continue
-
-                seen.add(key)
-                items.append(item)
+            seen.add(key)
+            items.append(item)
 
     CACHE = items
 
@@ -85,51 +79,199 @@ HTML = """<!doctype html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>LIVE OTP</title>
+
 <style>
-body{margin:0;font-family:sans-serif;background:#0f172a;color:white}
-.item{margin:6px;padding:10px;border-radius:10px;border:2px solid red;display:flex;gap:10px}
-.num,.otp{flex:1;padding:8px;border-radius:10px;text-align:center;font-weight:bold;cursor:pointer}
-.num{background:#3b82f6;color:black}
-.otp{background:#4ade80;color:black}
+body{margin:0;font-family:sans-serif;background:#0f172a;color:white;}
+
+.header{text-align:center;padding:10px;}
+.title{background:#1f2937;margin:5px;padding:10px;border-radius:10px;font-weight:bold;}
+
+.search{
+display:flex;
+gap:8px;
+padding:10px;
+position:sticky;
+top:0;
+background:#0f172a;
+z-index:10;
+}
+
+.search input{
+flex:1;
+padding:10px;
+border-radius:10px;
+border:none;
+font-size:16px;
+}
+
+.clear-btn{
+padding:10px;
+border:none;
+border-radius:10px;
+background:red;
+color:white;
+font-weight:bold;
+cursor:pointer;
+}
+
+.item{
+margin:6px;
+padding:10px;
+border-radius:12px;
+border:2px solid red;
+display:flex;
+gap:10px;
+}
+
+.num,.otp{
+flex:1;
+padding:10px;
+border-radius:10px;
+text-align:center;
+font-weight:bold;
+cursor:pointer;
+}
+
+.num{background:#3b82f6;color:black;}
+.otp{background:#4ade80;color:black;}
 </style>
 </head>
+
 <body>
-<h2 style="text-align:center;">LIVE OTP SYSTEM</h2>
+
+<div class="header">
+<div class="title">LIVE OTP SYSTEM</div>
+</div>
+
+<div class="search">
+<input id="search" placeholder="Search number...">
+<button class="clear-btn" onclick="clearSearch()">X</button>
+</div>
+
 <div id="data"></div>
+
 <script>
-async function load(){
-  let r = await fetch("/data");
-  let d = await r.json();
-  document.getElementById("data").innerHTML =
-    d.items.map(i=>`
-      <div class="item">
-        <div class="num">${i.number}</div>
-        <div class="otp">${i.otp}</div>
-      </div>
-    `).join("");
+
+let all = [];
+
+// 🔒 local storage save
+function saveInput(){
+localStorage.setItem("search_value", document.getElementById("search").value);
 }
-setInterval(load,3000);
+
+// 🔁 load saved value
+function loadInput(){
+let v = localStorage.getItem("search_value") || "";
+document.getElementById("search").value = v;
+}
+
+// normalize
+function normalize(x){
+return x.replace(/[^0-9]/g,'');
+}
+
+function smartMatch(num, q){
+num = normalize(num);
+q = normalize(q);
+
+if(q.length < 8){
+return num.startsWith(q);
+}
+
+let qFirst6 = q.substring(0,6);
+let qLast2 = q.slice(-2);
+
+let nFirst6 = num.substring(0,6);
+let nLast2 = num.slice(-2);
+
+return (qFirst6 === nFirst6) && (qLast2 === nLast2);
+}
+
+// copy
+function copyText(t){
+navigator.clipboard.writeText(t);
+}
+
+// render
+function render(items){
+document.getElementById("data").innerHTML =
+items.map(i => `
+<div class="item">
+<div class="num" onclick="copyText('${i.number}')">${i.number}</div>
+<div class="otp" onclick="copyText('${i.otp}')">${i.otp}</div>
+</div>
+`).join("");
+}
+
+// filter
+function filter(){
+let q = document.getElementById("search").value;
+saveInput();
+
+if(!q){
+render(all);
+return;
+}
+
+let result = all.filter(i => smartMatch(i.number, q));
+render(result);
+}
+
+// clear
+function clearSearch(){
+document.getElementById("search").value = "";
+localStorage.removeItem("search_value");
+render(all);
+}
+
+// live load
+async function load(){
+let r = await fetch("/data");
+let d = await r.json();
+all = d.items;
+
+// 🔒 value restore
+loadInput();
+
+let q = document.getElementById("search").value;
+
+if(q){
+filter(); // search active থাকলেও update হবে
+}else{
+render(all);
+}
+}
+
+// typing detect
+document.addEventListener("DOMContentLoaded", ()=>{
+loadInput();
+document.getElementById("search").addEventListener("input", filter);
+});
+
+setInterval(load, 3000);
 load();
+
 </script>
+
 </body>
 </html>
 """
 
-# ================= BACKGROUND TASK =================
-async def background_task():
+# ================= BACKGROUND =================
+async def background():
     while True:
         try:
             await build_cache()
         except Exception as e:
             print("Error:", e)
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
 # ================= START =================
 async def main():
     await client.start()
     await build_cache()
 
-    asyncio.create_task(background_task())
+    asyncio.create_task(background())
 
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text=HTML, content_type="text/html"))
@@ -138,7 +280,7 @@ async def main():
     runner = web.AppRunner(app)
     await runner.setup()
 
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
