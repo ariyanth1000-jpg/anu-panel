@@ -3,14 +3,15 @@ import asyncio
 import os
 from aiohttp import web
 from telethon import TelegramClient
-from dotenv import load_dotenv
 
-# ================= LOAD ENV =================
-load_dotenv()
-
-# ================= CONFIG =================
-api_id = int(os.getenv("API_ID"))
+# ================= CONFIG (SAFE ENV) =================
+api_id = os.getenv("API_ID")
 api_hash = os.getenv("API_HASH")
+
+if not api_id or not api_hash:
+    raise Exception("❌ API_ID / API_HASH not set in Render ENV")
+
+api_id = int(api_id)
 
 GROUP_ID = -1003771161345
 LIMIT = 500
@@ -60,7 +61,6 @@ async def build_cache():
 
         for item in parse(msg.message):
             key = (item["number"], item["otp"])
-
             if key in seen:
                 continue
 
@@ -82,7 +82,6 @@ HTML = """<!doctype html>
 
 <style>
 body{margin:0;font-family:sans-serif;background:#0f172a;color:white;}
-
 .header{text-align:center;padding:10px;}
 .title{background:#1f2937;margin:5px;padding:10px;border-radius:10px;font-weight:bold;}
 
@@ -154,18 +153,6 @@ cursor:pointer;
 
 let all = [];
 
-// 🔒 local storage save
-function saveInput(){
-localStorage.setItem("search_value", document.getElementById("search").value);
-}
-
-// 🔁 load saved value
-function loadInput(){
-let v = localStorage.getItem("search_value") || "";
-document.getElementById("search").value = v;
-}
-
-// normalize
 function normalize(x){
 return x.replace(/[^0-9]/g,'');
 }
@@ -187,12 +174,10 @@ let nLast2 = num.slice(-2);
 return (qFirst6 === nFirst6) && (qLast2 === nLast2);
 }
 
-// copy
 function copyText(t){
 navigator.clipboard.writeText(t);
 }
 
-// render
 function render(items){
 document.getElementById("data").innerHTML =
 items.map(i => `
@@ -203,10 +188,8 @@ items.map(i => `
 `).join("");
 }
 
-// filter
 function filter(){
 let q = document.getElementById("search").value;
-saveInput();
 
 if(!q){
 render(all);
@@ -217,34 +200,27 @@ let result = all.filter(i => smartMatch(i.number, q));
 render(result);
 }
 
-// clear
 function clearSearch(){
 document.getElementById("search").value = "";
-localStorage.removeItem("search_value");
 render(all);
 }
 
-// live load
 async function load(){
 let r = await fetch("/data");
 let d = await r.json();
 all = d.items;
 
-// 🔒 value restore
-loadInput();
-
+// 🔥 search থাকলেও clear হবে না
 let q = document.getElementById("search").value;
 
 if(q){
-filter(); // search active থাকলেও update হবে
+filter();
 }else{
 render(all);
 }
 }
 
-// typing detect
 document.addEventListener("DOMContentLoaded", ()=>{
-loadInput();
 document.getElementById("search").addEventListener("input", filter);
 });
 
@@ -284,7 +260,7 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    print(f"Running on port {port}")
+    print(f"✅ Running on port {port}")
 
     while True:
         await asyncio.sleep(3600)
