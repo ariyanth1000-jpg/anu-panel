@@ -5,10 +5,9 @@ from aiohttp import web
 from telethon import TelegramClient
 
 # ================= CONFIG =================
-api_id = 21385262
-api_hash = "0b685b2ead34f78600e21e748495682d"
+api_id = int(os.environ.get("API_ID"))
+api_hash = os.environ.get("API_HASH")
 
-# 🔥 multiple groups
 GROUP_IDS = [
     -1003771161345,
     -1002531902737
@@ -86,151 +85,51 @@ HTML = """<!doctype html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>LIVE OTP</title>
-
 <style>
-body{
-  margin:0;
-  font-family:sans-serif;
-  background:linear-gradient(135deg,#0f172a,#1e293b);
-  color:white;
-}
-
-.header{text-align:center;padding:10px;}
-.title{background:#1f2937;margin:5px;padding:8px;border-radius:10px;font-weight:bold;}
-
-.search{padding:8px;}
-.search input{width:100%;padding:10px;border-radius:10px;border:none;}
-
-.item{
-  margin:6px;
-  padding:10px;
-  border-radius:12px;
-  border:2px solid red;
-  display:flex;
-  gap:10px;
-}
-
-.num, .otp{
-  flex:1;
-  padding:8px;
-  border-radius:10px;
-  text-align:center;
-  font-weight:bold;
-  cursor:pointer;
-}
-
-.num{
-  background:#3b82f6;
-  color:black;
-}
-
-.otp{
-  background:#4ade80;
-  color:black;
-}
+body{margin:0;font-family:sans-serif;background:#0f172a;color:white}
+.item{margin:6px;padding:10px;border-radius:10px;border:2px solid red;display:flex;gap:10px}
+.num,.otp{flex:1;padding:8px;border-radius:10px;text-align:center;font-weight:bold;cursor:pointer}
+.num{background:#3b82f6;color:black}
+.otp{background:#4ade80;color:black}
 </style>
 </head>
-
 <body>
-
-<div class="header">
-  <div class="title">LIVE OTP SYSTEM</div>
-</div>
-
-<div class="search">
-  <input id="search" placeholder="Search..." oninput="filter()">
-</div>
-
+<h2 style="text-align:center;">LIVE OTP SYSTEM</h2>
 <div id="data"></div>
-
 <script>
-
-let all = [];
-let searchMode = false;
-
-function normalize(x){
-  return x.replace(/[^0-9]/g,'');
-}
-
-function smartMatch(num, q){
-
-  num = normalize(num);
-  q = normalize(q);
-
-  if(q.length < 8){
-    return num.startsWith(q);
-  }
-
-  let qFirst6 = q.substring(0,6);
-  let qLast2  = q.slice(-2);
-
-  let nFirst6 = num.substring(0,6);
-  let nLast2  = num.slice(-2);
-
-  return (qFirst6 === nFirst6) && (qLast2 === nLast2);
-}
-
-function copyText(t){
-  navigator.clipboard.writeText(t);
-}
-
-function render(items){
-  document.getElementById("data").innerHTML =
-    items.map(i=>`
-      <div class="item">
-
-        <div class="num" onclick="copyText('${i.number}')">
-          ${i.number}
-        </div>
-
-        <div class="otp" onclick="copyText('${i.otp}')">
-          ${i.otp}
-        </div>
-
-      </div>
-    `).join("");
-}
-
-function filter(){
-  let q = document.getElementById("search").value;
-
-  if(!q){
-    searchMode = false;
-    render(all);
-    return;
-  }
-
-  searchMode = true;
-
-  let result = all.filter(i => smartMatch(i.number, q));
-
-  render(result);
-}
-
 async function load(){
   let r = await fetch("/data");
   let d = await r.json();
-
-  all = d.items;
-
-  if(!searchMode){
-    render(all);
-  }
+  document.getElementById("data").innerHTML =
+    d.items.map(i=>`
+      <div class="item">
+        <div class="num">${i.number}</div>
+        <div class="otp">${i.otp}</div>
+      </div>
+    `).join("");
 }
-
-setInterval(load, 2000);
+setInterval(load,3000);
 load();
-
 </script>
-
 </body>
 </html>
 """
+
+# ================= BACKGROUND TASK =================
+async def background_task():
+    while True:
+        try:
+            await build_cache()
+        except Exception as e:
+            print("Error:", e)
+        await asyncio.sleep(10)
 
 # ================= START =================
 async def main():
     await client.start()
     await build_cache()
+
+    asyncio.create_task(background_task())
 
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text=HTML, content_type="text/html"))
@@ -243,10 +142,9 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    print(f"LIVE: http://127.0.0.1:{port}")
+    print(f"Running on port {port}")
 
     while True:
-        await build_cache()
-        await asyncio.sleep(5)
+        await asyncio.sleep(3600)
 
 asyncio.run(main())
