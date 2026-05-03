@@ -150,13 +150,13 @@ select{width:95%;margin:5px;padding:10px;border-radius:10px}
 
 <body>
 
-<div class="header">LIVE OTP SYSTEM</div>
+<div class="header">TAMIM ANU LIVE OTP SYSTEM</div>
 
 <select id="gid" onchange="changeGroup()"></select>
 
 <div class="searchbox">
-<input id="search" placeholder="Search number..." oninput="filter()">
-<button class="clear" onclick="clearSearch()">X</button>
+<input id="search" placeholder="Paste number & Search..." oninput="filter()">
+<button class="clear" onclick="clearSearch()">Clear</button>
 </div>
 
 <div id="data"></div>
