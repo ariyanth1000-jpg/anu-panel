@@ -4,253 +4,278 @@ import os
 from aiohttp import web
 from telethon import TelegramClient
 
-# ================= CONFIG (SAFE ENV) =================
-api_id = os.getenv("API_ID")
-api_hash = os.getenv("API_HASH")
+# ================= CONFIG =================
+api_id = int(os.getenv("API_ID", "123456"))
+api_hash = os.getenv("API_HASH", "your_api_hash")
 
-if not api_id or not api_hash:
-    raise Exception("❌ API_ID / API_HASH not set in Render ENV")
+GROUP_RULES = {
+    "-1003771161345": (7, 2),
+    "-1002531902737": (4, 4),
+    "-1002567258773": (5, 4),
+    "-1002652123574": (4, 4),
+    "-1003861246919": (3, 4),
 
-api_id = int(api_id)
+    "-1003435291410": (3, 4),
+    "-1003775658194": (4, 4),
+    "-1002898987582": (2, 4),
 
-GROUP_ID = -1003771161345
-LIMIT = 500
+    "-1003463811076": (2, 4),
+    "-1003357916577": (5, 4),
+}
+
+LIMIT = 200
 
 client = TelegramClient("otp_session", api_id, api_hash)
 
-CACHE = []
+CACHE = {"gid": None, "items": []}
+CURRENT_TASK = None
 
-# ================= PARSE =================
-def clean(text):
-    text = re.sub(r'\d{4}-\d{2}-\d{2}', ' ', text)
-    text = re.sub(r'\d{2}:\d{2}:\d{2}', ' ', text)
-    return text
+# ================= PARSER =================
+def extract_number(text):
+    m = re.search(r'Number[:\-]?\s*([+\dXx*\•\s]+)', text)
+    if m:
+        return m.group(1).strip()
 
-def extract_numbers(text):
-    nums = re.findall(r'\+[\dXx\s]{6,}', text)
-    out = []
-    for n in nums:
-        if len(re.sub(r'\D', '', n)) >= 7:
-            out.append(n.strip())
-    return out
+    m = re.search(r'[\+\d][\dXx*\•\s]{6,}', text)
+    if m:
+        return m.group(0).strip()
 
-def extract_otps(text):
-    raw = re.findall(r'\b\d{5,7}\b', text)
-    return list(dict.fromkeys(raw))
+    m = re.search(r'(\d{5,}TNE\d{3,})', text)
+    if m:
+        return m.group(1)
+
+    return None
+
+
+def extract_otp(text):
+    lines = text.splitlines()
+
+    for line in lines:
+        # OTP / Code label থাকলে
+        m = re.search(r'(OTP|Code)[:\-]?\s*([\d\s]{4,8})', line, re.I)
+        if m:
+            otp = re.sub(r'\s', '', m.group(2))
+            if 5 <= len(otp) <= 7:
+                return otp
+
+        # pure number line
+        nums = re.findall(r'\b\d{5,7}\b', line)
+        if nums:
+            return nums[-1]
+
+    return None
+
 
 def parse(text):
-    text = clean(text)
-    numbers = extract_numbers(text)
-    otps = extract_otps(text)
+    n = extract_number(text)
+    o = extract_otp(text)
+    if n and o:
+        return {"number": n, "otp": o}
+    return None
 
-    result = []
-    for n in numbers:
-        for o in otps:
-            result.append({"number": n, "otp": o})
-    return result
 
 # ================= CACHE =================
-async def build_cache():
-    global CACHE
+async def build_cache(gid):
     items = []
     seen = set()
 
-    async for msg in client.iter_messages(GROUP_ID, limit=LIMIT):
+    async for msg in client.iter_messages(int(gid), limit=500):
         if not msg.message:
             continue
 
-        for item in parse(msg.message):
-            key = (item["number"], item["otp"])
-            if key in seen:
-                continue
+        item = parse(msg.message)
+        if not item:
+            continue
 
-            seen.add(key)
-            items.append(item)
+        key = (item["number"], item["otp"])
+        if key in seen:
+            continue
 
-    CACHE = items
+        seen.add(key)
+        items.append(item)
+
+        if len(items) >= LIMIT:
+            break
+
+    CACHE["gid"] = gid
+    CACHE["items"] = items
+
+
+# ================= LIVE REFRESH =================
+async def auto_refresh(gid):
+    while True:
+        try:
+            await build_cache(gid)
+        except Exception as e:
+            print("Refresh error:", e)
+        await asyncio.sleep(2)
+
 
 # ================= API =================
 async def data(request):
-    return web.json_response({"items": CACHE})
+    global CURRENT_TASK
+
+    gid = request.query.get("gid")
+
+    if CACHE["gid"] != gid:
+        if CURRENT_TASK:
+            CURRENT_TASK.cancel()
+
+        await build_cache(gid)
+        CURRENT_TASK = asyncio.create_task(auto_refresh(gid))
+
+    return web.json_response({"items": CACHE["items"]})
+
 
 # ================= HTML =================
-HTML = """<!doctype html>
+HTML = """
+<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>LIVE OTP</title>
 
 <style>
-body{margin:0;font-family:sans-serif;background:#0f172a;color:white;}
-.header{text-align:center;padding:10px;}
-.title{background:#1f2937;margin:5px;padding:10px;border-radius:10px;font-weight:bold;}
-
-.search{
-display:flex;
-gap:8px;
-padding:10px;
-position:sticky;
-top:0;
-background:#0f172a;
-z-index:10;
-}
-
-.search input{
-flex:1;
-padding:10px;
-border-radius:10px;
-border:none;
-font-size:16px;
-}
-
-.clear-btn{
-padding:10px;
-border:none;
-border-radius:10px;
-background:red;
-color:white;
-font-weight:bold;
-cursor:pointer;
-}
-
-.item{
-margin:6px;
-padding:10px;
-border-radius:12px;
-border:2px solid red;
-display:flex;
-gap:10px;
-}
-
-.num,.otp{
-flex:1;
-padding:10px;
-border-radius:10px;
-text-align:center;
-font-weight:bold;
-cursor:pointer;
-}
-
-.num{background:#3b82f6;color:black;}
-.otp{background:#4ade80;color:black;}
+body{margin:0;font-family:sans-serif;background:#0f172a;color:white}
+.header{text-align:center;padding:12px;font-weight:bold}
+select{width:95%;margin:5px;padding:10px;border-radius:10px}
+.searchbox{display:flex;padding:5px}
+.searchbox input{flex:1;padding:10px;border-radius:10px;border:none}
+.clear{background:red;color:white;padding:10px;border-radius:10px;margin-left:5px}
+.item{margin:6px;padding:10px;border-radius:10px;border:2px solid red;display:flex;gap:10px}
+.num{flex:1;background:#3b82f6;color:black;padding:10px;border-radius:10px;text-align:center;font-weight:bold}
+.otp{flex:1;background:#4ade80;color:black;padding:10px;border-radius:10px;text-align:center;font-weight:bold;cursor:pointer}
 </style>
 </head>
 
 <body>
 
-<div class="header">
-<div class="title">TAMIM ANU LIVE OTP SYSTEM</div>
-</div>
+<div class="header">LIVE OTP SYSTEM</div>
 
-<div class="search">
-<input id="search" placeholder="paste number here & get Code...">
-<button class="clear-btn" onclick="clearSearch()">Clear</button>
+<select id="gid" onchange="changeGroup()"></select>
+
+<div class="searchbox">
+<input id="search" placeholder="Search number..." oninput="filter()">
+<button class="clear" onclick="clearSearch()">X</button>
 </div>
 
 <div id="data"></div>
 
 <script>
-
 let all = [];
+let gid = "";
+let rules = %RULES%;
 
 function normalize(x){
-return x.replace(/[^0-9]/g,'');
+    return x.replace(/[^0-9]/g,'');
 }
 
-function smartMatch(num, q){
-num = normalize(num);
-q = normalize(q);
+function match(num, query){
+    let n = normalize(num);
+    let q = normalize(query);
 
-if(q.length < 8){
-return num.startsWith(q);
+    if(!q) return true;
+
+    let rule = rules[gid];
+    let f = n.slice(0, rule[0]);
+    let l = n.slice(-rule[1]);
+
+    return q.startsWith(f) && q.endsWith(l);
 }
 
-let qFirst6 = q.substring(0,6);
-let qLast2 = q.slice(-2);
-
-let nFirst6 = num.substring(0,6);
-let nLast2 = num.slice(-2);
-
-return (qFirst6 === nFirst6) && (qLast2 === nLast2);
-}
-
-function copyText(t){
-navigator.clipboard.writeText(t);
+function copyOTP(text){
+    navigator.clipboard.writeText(text);
 }
 
 function render(items){
-document.getElementById("data").innerHTML =
-items.map(i => `
-<div class="item">
-<div class="num" onclick="copyText('${i.number}')">${i.number}</div>
-<div class="otp" onclick="copyText('${i.otp}')">${i.otp}</div>
-</div>
-`).join("");
+    document.getElementById("data").innerHTML =
+    items.map(i=>`
+        <div class="item">
+            <div class="num">${i.number}</div>
+            <div class="otp" onclick="copyOTP('${i.otp}')">${i.otp}</div>
+        </div>
+    `).join("");
 }
 
 function filter(){
-let q = document.getElementById("search").value;
+    let q = document.getElementById("search").value;
+    localStorage.setItem("searchValue", q);
 
-if(!q){
-render(all);
-return;
-}
+    if(!q){
+        render(all);
+        return;
+    }
 
-let result = all.filter(i => smartMatch(i.number, q));
-render(result);
+    let res = all.filter(i=>match(i.number,q));
+
+    if(res.length === 0){
+        document.getElementById("data").innerHTML = "<center>No Result</center>";
+        return;
+    }
+
+    render(res);
 }
 
 function clearSearch(){
-document.getElementById("search").value = "";
-render(all);
+    document.getElementById("search").value="";
+    localStorage.removeItem("searchValue");
+    render(all);
 }
 
 async function load(){
-let r = await fetch("/data");
-let d = await r.json();
-all = d.items;
-
-// 🔥 search থাকলেও clear হবে না
-let q = document.getElementById("search").value;
-
-if(q){
-filter();
-}else{
-render(all);
-}
+    let r = await fetch("/data?gid="+gid);
+    let d = await r.json();
+    all = d.items;
+    filter();
 }
 
-document.addEventListener("DOMContentLoaded", ()=>{
-document.getElementById("search").addEventListener("input", filter);
-});
+function changeGroup(){
+    gid = document.getElementById("gid").value;
+    localStorage.setItem("selectedGroup", gid);
+    load();
+}
 
-setInterval(load, 3000);
-load();
+function init(){
+    let select = document.getElementById("gid");
+    let groups = Object.keys(rules);
 
+    groups.forEach((g,i)=>{
+        let opt = document.createElement("option");
+        opt.value = g;
+        opt.innerText = "TA Number Range ID ☞ " + (i+1).toString().padStart(2,"0");
+        select.appendChild(opt);
+    });
+
+    let saved = localStorage.getItem("selectedGroup");
+    gid = saved && groups.includes(saved) ? saved : groups[0];
+
+    select.value = gid;
+
+    let s = localStorage.getItem("searchValue");
+    if(s){
+        document.getElementById("search").value = s;
+    }
+
+    load();
+    setInterval(load,2000);
+}
+
+init();
 </script>
 
 </body>
 </html>
 """
 
-# ================= BACKGROUND =================
-async def background():
-    while True:
-        try:
-            await build_cache()
-        except Exception as e:
-            print("Error:", e)
-        await asyncio.sleep(5)
-
 # ================= START =================
 async def main():
     await client.start()
-    await build_cache()
-
-    asyncio.create_task(background())
+    print("Telegram Connected ✅")
 
     app = web.Application()
-    app.router.add_get("/", lambda r: web.Response(text=HTML, content_type="text/html"))
+    html = HTML.replace("%RULES%", str(GROUP_RULES))
+
+    app.router.add_get("/", lambda r: web.Response(text=html, content_type="text/html"))
     app.router.add_get("/data", data)
 
     runner = web.AppRunner(app)
@@ -260,9 +285,9 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    print(f"✅ Running on port {port}")
+    print("Server Running on", port)
 
     while True:
-        await asyncio.sleep(3600)
+        await asyncio.sleep(10)
 
 asyncio.run(main())
