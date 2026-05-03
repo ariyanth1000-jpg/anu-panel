@@ -156,7 +156,7 @@ select{width:95%;margin:5px;padding:10px;border-radius:10px}
 
 <div class="searchbox">
 <input id="search" placeholder="Paste number & Search..." oninput="filter()">
-<button class="clear" onclick="clearSearch()">Clear</button>
+<button class="clear" onclick="clearSearch()">Clear Number</button>
 </div>
 
 <div id="data"></div>
