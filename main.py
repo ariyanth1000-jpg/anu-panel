@@ -25,38 +25,17 @@ LIMIT = 200
 
 client = TelegramClient("otp_session", api_id, api_hash)
 
-CACHE = {"gid": None, "items": []}
-CURRENT_TASK = None
+CACHE = {gid: [] for gid in GROUP_IDS}
 
 # ================= PARSER =================
 def extract_number(text):
-    m = re.search(r'Number[:\-]?\s*([+\dXx*\•\s]+)', text)
-    if m:
-        return m.group(1).strip()
-
-    m = re.search(r'[\+\d][\dXx*\•\s]{6,}', text)
-    if m:
-        return m.group(0).strip()
-
-    return None
-
+    m = re.search(r'[\+\d][\dXx*\s]{6,}', text)
+    return m.group(0).strip() if m else None
 
 def extract_otp(text):
-    lines = text.splitlines()
-
-    for line in lines:
-        m = re.search(r'(OTP|Code)[:\-]?\s*([\d\s]{4,8})', line, re.I)
-        if m:
-            otp = re.sub(r'\s', '', m.group(2))
-            if 5 <= len(otp) <= 7:
-                return otp
-
-        nums = re.findall(r'\b\d{5,7}\b', line)
-        if nums:
-            return nums[-1]
-
-    return None
-
+    text = text.replace(" ", "")
+    m = re.findall(r'\b\d{5,6}\b', text)
+    return m[-1] if m else None
 
 def parse(text):
     n = extract_number(text)
@@ -65,13 +44,12 @@ def parse(text):
         return {"number": n, "otp": o}
     return None
 
-
 # ================= CACHE =================
 async def build_cache(gid):
     items = []
     seen = set()
 
-    async for msg in client.iter_messages(int(gid), limit=500):
+    async for msg in client.iter_messages(int(gid), limit=LIMIT):
         if not msg.message:
             continue
 
@@ -86,38 +64,17 @@ async def build_cache(gid):
         seen.add(key)
         items.append(item)
 
-        if len(items) >= LIMIT:
-            break
+    CACHE[gid] = items
 
-    CACHE["gid"] = gid
-    CACHE["items"] = items
-
-
-# ================= LIVE REFRESH =================
-async def auto_refresh(gid):
+async def background_refresh():
     while True:
-        try:
-            await build_cache(gid)
-        except Exception as e:
-            print("Refresh error:", e)
+        await asyncio.gather(*[build_cache(g) for g in GROUP_IDS])
         await asyncio.sleep(2)
-
 
 # ================= API =================
 async def data(request):
-    global CURRENT_TASK
-
     gid = request.query.get("gid")
-
-    if CACHE["gid"] != gid:
-        if CURRENT_TASK:
-            CURRENT_TASK.cancel()
-
-        await build_cache(gid)
-        CURRENT_TASK = asyncio.create_task(auto_refresh(gid))
-
-    return web.json_response({"items": CACHE["items"]})
-
+    return web.json_response({"items": CACHE.get(gid, [])})
 
 # ================= HTML =================
 HTML = """
@@ -128,15 +85,30 @@ HTML = """
 <title>LIVE OTP</title>
 
 <style>
-body{margin:0;font-family:sans-serif;background:#0f172a;color:white}
+body{margin:0;background:#0f172a;color:white;font-family:sans-serif}
 .header{text-align:center;padding:12px;font-weight:bold}
 select{width:95%;margin:5px;padding:10px;border-radius:10px}
+
 .searchbox{display:flex;padding:5px}
 .searchbox input{flex:1;padding:10px;border-radius:10px;border:none}
 .clear{background:red;color:white;padding:10px;border-radius:10px;margin-left:5px}
+
 .item{margin:6px;padding:10px;border-radius:10px;border:2px solid red;display:flex;gap:10px}
 .num{flex:1;background:#3b82f6;color:black;padding:10px;border-radius:10px;text-align:center;font-weight:bold}
 .otp{flex:1;background:#4ade80;color:black;padding:10px;border-radius:10px;text-align:center;font-weight:bold;cursor:pointer}
+
+.toast{
+position:fixed;
+bottom:20px;
+left:50%;
+transform:translateX(-50%);
+background:#22c55e;
+color:black;
+padding:10px 20px;
+border-radius:10px;
+display:none;
+font-weight:bold;
+}
 </style>
 </head>
 
@@ -153,41 +125,52 @@ select{width:95%;margin:5px;padding:10px;border-radius:10px}
 
 <div id="data"></div>
 
+<div id="toast" class="toast">Copied ✅</div>
+
 <script>
+
 let all = [];
 let gid = "";
 
-// normalize
 function normalize(x){
-    return x.replace(/[^0-9]/g,'');
+    return (x || "").replace(/[^0-9]/g,'');
 }
 
-// 🔥 FINAL FILTER (FIRST 3 + LAST 2)
+// 🔥 FILTER
 function match(num, query){
-
     let n = normalize(num);
     let q = normalize(query);
 
     if(!q) return true;
 
-    let f = 3;
-    let l = 2;
-
-    if(q.length < (f + l)){
+    if(q.length < 5){
         return n.includes(q);
     }
 
-    let qFirst = q.slice(0, f);
-    let qLast  = q.slice(-l);
-
-    let nFirst = n.slice(0, f);
-    let nLast  = n.slice(-l);
-
-    return (qFirst === nFirst) && (qLast === nLast);
+    return n.startsWith(q.slice(0,3)) && n.endsWith(q.slice(-2));
 }
 
-function copyOTP(text){
-    navigator.clipboard.writeText(text);
+// 🔥 COPY FIX (WORKS EVERYWHERE)
+function copyText(text){
+
+    if(navigator.clipboard){
+        navigator.clipboard.writeText(text);
+    }else{
+        let textarea = document.createElement("textarea");
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+    }
+
+    showToast();
+}
+
+function showToast(){
+    let t = document.getElementById("toast");
+    t.style.display = "block";
+    setTimeout(()=>{ t.style.display = "none"; },1000);
 }
 
 function render(items){
@@ -195,13 +178,14 @@ function render(items){
     items.map(i=>`
         <div class="item">
             <div class="num">${i.number}</div>
-            <div class="otp" onclick="copyOTP('${i.otp}')">${i.otp}</div>
+            <div class="otp" onclick="copyText('${i.otp}')">${i.otp}</div>
         </div>
     `).join("");
 }
 
 function filter(){
     let q = document.getElementById("search").value;
+
     localStorage.setItem("searchValue", q);
 
     if(!q){
@@ -225,47 +209,32 @@ function clearSearch(){
     render(all);
 }
 
-// 🔥 FIXED LOAD
 async function load(){
-    try{
-        let r = await fetch("/data?gid="+gid);
-        let d = await r.json();
-
-        all = d.items || [];
-
-        filter();
-    }catch(e){
-        document.getElementById("data").innerHTML = "<center>Error Loading</center>";
-    }
+    let r = await fetch("/data?gid="+gid);
+    let d = await r.json();
+    all = d.items;
+    filter();
 }
 
-// 🔥 FIXED CHANGE GROUP (INSTANT)
 function changeGroup(){
     gid = document.getElementById("gid").value;
-
     localStorage.setItem("selectedGroup", gid);
-
-    all = [];
-    document.getElementById("data").innerHTML = "<center>Loading...</center>";
-
     load();
 }
 
 function init(){
     let select = document.getElementById("gid");
-
     let groups = %GROUPS%;
 
     groups.forEach((g,i)=>{
         let opt = document.createElement("option");
         opt.value = g;
-        opt.innerText = "TA Number Range ID ☞ " + (i+1).toString().padStart(2,"0");
+        opt.innerText = "TA Range ☞ " + (i+1).toString().padStart(2,"0");
         select.appendChild(opt);
     });
 
     let saved = localStorage.getItem("selectedGroup");
     gid = saved && groups.includes(saved) ? saved : groups[0];
-
     select.value = gid;
 
     let s = localStorage.getItem("searchValue");
@@ -278,6 +247,7 @@ function init(){
 }
 
 init();
+
 </script>
 
 </body>
@@ -287,7 +257,6 @@ init();
 # ================= START =================
 async def main():
     await client.start()
-    print("Telegram Connected ✅")
 
     app = web.Application()
     html = HTML.replace("%GROUPS%", str(GROUP_IDS))
@@ -302,7 +271,9 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    print("Server Running on", port)
+    asyncio.create_task(background_refresh())
+
+    print("Running on", port)
 
     while True:
         await asyncio.sleep(10)
