@@ -229,7 +229,7 @@ function init(){
     groups.forEach((g,i)=>{
         let opt = document.createElement("option");
         opt.value = g;
-        opt.innerText = "TA Range ☞ " + (i+1).toString().padStart(2,"0");
+        opt.innerText = "TA Number Range ID ☞ " + (i+1).toString().padStart(2,"0");
         select.appendChild(opt);
     });
 
