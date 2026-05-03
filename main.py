@@ -8,20 +8,18 @@ from telethon import TelegramClient
 api_id = int(os.getenv("API_ID", "123456"))
 api_hash = os.getenv("API_HASH", "your_api_hash")
 
-GROUP_RULES = {
-    "-1003771161345": (7, 2),
-    "-1002531902737": (4, 4),
-    "-1002567258773": (5, 4),
-    "-1002652123574": (4, 4),
-    "-1003861246919": (3, 4),
-
-    "-1003435291410": (3, 4),
-    "-1003775658194": (4, 4),
-    "-1002898987582": (2, 4),
-
-    "-1003463811076": (2, 4),
-    "-1003357916577": (5, 4),
-}
+GROUP_IDS = [
+    "-1003771161345",
+    "-1002531902737",
+    "-1002567258773",
+    "-1002652123574",
+    "-1003861246919",
+    "-1003435291410",
+    "-1003775658194",
+    "-1002898987582",
+    "-1003463811076",
+    "-1003357916577",
+]
 
 LIMIT = 200
 
@@ -40,10 +38,6 @@ def extract_number(text):
     if m:
         return m.group(0).strip()
 
-    m = re.search(r'(\d{5,}TNE\d{3,})', text)
-    if m:
-        return m.group(1)
-
     return None
 
 
@@ -51,14 +45,12 @@ def extract_otp(text):
     lines = text.splitlines()
 
     for line in lines:
-        # OTP / Code label থাকলে
         m = re.search(r'(OTP|Code)[:\-]?\s*([\d\s]{4,8})', line, re.I)
         if m:
             otp = re.sub(r'\s', '', m.group(2))
             if 5 <= len(otp) <= 7:
                 return otp
 
-        # pure number line
         nums = re.findall(r'\b\d{5,7}\b', line)
         if nums:
             return nums[-1]
@@ -164,23 +156,34 @@ select{width:95%;margin:5px;padding:10px;border-radius:10px}
 <script>
 let all = [];
 let gid = "";
-let rules = %RULES%;
 
+// normalize
 function normalize(x){
     return x.replace(/[^0-9]/g,'');
 }
 
+// 🔥 FINAL FILTER (FIRST 3 + LAST 2)
 function match(num, query){
+
     let n = normalize(num);
     let q = normalize(query);
 
     if(!q) return true;
 
-    let rule = rules[gid];
-    let f = n.slice(0, rule[0]);
-    let l = n.slice(-rule[1]);
+    let f = 3;
+    let l = 2;
 
-    return q.startsWith(f) && q.endsWith(l);
+    if(q.length < (f + l)){
+        return n.includes(q);
+    }
+
+    let qFirst = q.slice(0, f);
+    let qLast  = q.slice(-l);
+
+    let nFirst = n.slice(0, f);
+    let nLast  = n.slice(-l);
+
+    return (qFirst === nFirst) && (qLast === nLast);
 }
 
 function copyOTP(text){
@@ -222,22 +225,36 @@ function clearSearch(){
     render(all);
 }
 
+// 🔥 FIXED LOAD
 async function load(){
-    let r = await fetch("/data?gid="+gid);
-    let d = await r.json();
-    all = d.items;
-    filter();
+    try{
+        let r = await fetch("/data?gid="+gid);
+        let d = await r.json();
+
+        all = d.items || [];
+
+        filter();
+    }catch(e){
+        document.getElementById("data").innerHTML = "<center>Error Loading</center>";
+    }
 }
 
+// 🔥 FIXED CHANGE GROUP (INSTANT)
 function changeGroup(){
     gid = document.getElementById("gid").value;
+
     localStorage.setItem("selectedGroup", gid);
+
+    all = [];
+    document.getElementById("data").innerHTML = "<center>Loading...</center>";
+
     load();
 }
 
 function init(){
     let select = document.getElementById("gid");
-    let groups = Object.keys(rules);
+
+    let groups = %GROUPS%;
 
     groups.forEach((g,i)=>{
         let opt = document.createElement("option");
@@ -273,7 +290,7 @@ async def main():
     print("Telegram Connected ✅")
 
     app = web.Application()
-    html = HTML.replace("%RULES%", str(GROUP_RULES))
+    html = HTML.replace("%GROUPS%", str(GROUP_IDS))
 
     app.router.add_get("/", lambda r: web.Response(text=html, content_type="text/html"))
     app.router.add_get("/data", data)
